@@ -685,12 +685,12 @@
             }
         }
 
-        // THÀNH VIÊN
+        // THÀNH VIÊN - ẨN TÀI KHOẢN ADMIN
         function renderMembers() {
             const tbody = document.getElementById('member-list');
             tbody.innerHTML = '';
             membersData.forEach((mb, index) => {
-                if (currentUser.username !== 'admin' && mb.username === 'admin') return;
+                if (mb.username === 'admin') return;
 
                 const tr = document.createElement('tr');
                 let adminCols = '';
@@ -757,11 +757,12 @@
             document.getElementById('btn-cancel-edit').style.display = "none";
         }
 
-        // NHIỆM VỤ
+        // NHIỆM VỤ - ẨN TÀI KHOẢN ADMIN
         function renderTaskOverview() {
-            const tbody = document.getElementById('task-overview-list'); tbody.innerHTML = '';
+            const tbody = document.getElementById('task-overview-list'); 
+            tbody.innerHTML = '';
             membersData.forEach((mb, index) => {
-                if (currentUser.username !== 'admin' && mb.username === 'admin') return;
+                if (mb.username === 'admin') return;
 
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
@@ -1082,7 +1083,7 @@
             }
         }
 
-        // THỐNG KÊ
+        // THỐNG KÊ - ẨN TÀI KHOẢN ADMIN
         function enableEditPoints() {
             document.getElementById('pt-xs').disabled = false;
             document.getElementById('pt-tot').disabled = false;
@@ -1122,7 +1123,7 @@
             let scores = [];
 
             membersData.forEach((mb) => {
-                if (currentUser.username !== 'admin' && mb.username === 'admin') return;
+                if (mb.username === 'admin') return;
 
                 let xs = 0, tot = 0, ht = 0, cht = 0;
                 
