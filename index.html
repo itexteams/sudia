@@ -96,7 +96,7 @@
         
         .point-input { width: 60px; padding: 5px; margin: 0; text-align: center; font-weight: bold; }
 
-        /* ======== CSS MỚI CHO THANH CÔNG CỤ SOẠN THẢO ======== */
+        /* CSS THANH CÔNG CỤ SOẠN THẢO */
         .editor-toolbar {
             display: flex;
             gap: 5px;
@@ -406,7 +406,16 @@
             </div>
         </div>
 
-        <button class="btn-success" onclick="saveMeeting()">Đăng thông báo</button>
+        <!-- ĐÍNH KÈM VĂN BẢN (KHÔNG DÙNG STORAGE TRẢ PHÍ) -->
+        <div style="background: #e9ecef; padding: 15px; border-radius: 5px; margin-bottom: 15px; border: 1px solid #ccc;">
+            <h4 style="margin-top: 0; color: #0056b3;">Đính kèm văn bản (Giới hạn: Dưới 2.5MB / file)</h4>
+            <p style="font-size: 13px; color: #666; margin-top: 0;"><i>Hệ thống lưu trữ miễn phí có dung lượng giới hạn, vui lòng <b>nén nhẹ file PDF</b> trước khi tải lên.</i></p>
+            <input type="file" id="m-files" multiple onchange="handleFileUpload(event)">
+            <div id="upload-status" style="margin-top: 10px; font-size: 13px; color: #d33;"></div>
+            <ul id="file-list-preview" style="list-style: none; padding: 0; margin-top: 10px;"></ul>
+        </div>
+
+        <button id="btn-save-item" class="btn-success" onclick="saveMeeting()">Đăng thông báo</button>
         <button class="btn-danger" onclick="showScreen('main-app')">Hủy</button>
     </div>
 
@@ -480,6 +489,16 @@
 
                 <!-- VÙNG RENDER CÁC CUỘC HỌP NHÓM BÊN DƯỚI -->
                 <div id="d-sub-meetings-container"></div>
+            </div>
+        </div>
+
+        <!-- KHU VỰC TƯƠNG TÁC BÊN DƯỚI -->
+        <div class="no-print" id="attachment-section" style="margin-top: 20px; display: none;">
+            <h4 style="background-color: #f8f9fa; border-left: 4px solid #dc3545; padding: 10px; margin-bottom: 10px;">Tài liệu đính kèm:</h4>
+            <div id="d-files-list"></div>
+            <!-- Vùng hiển thị PDF nội tuyến -->
+            <div id="pdf-viewer-container" style="display: none; margin-top: 15px; border: 1px solid #ccc; height: 600px;">
+                <iframe id="pdf-iframe" style="width: 100%; height: 100%; border: none;"></iframe>
             </div>
         </div>
 
@@ -579,7 +598,6 @@
             printAreaTemplate = document.getElementById('print-area').innerHTML;
         });
 
-        // ================= HÀM MỚI: XỬ LÝ CHÈN ĐỊNH DẠNG TEXT =================
         function formatText(command, targetId) {
             const textarea = document.getElementById(targetId);
             if (!textarea) return;
@@ -595,11 +613,9 @@
 
             textarea.value = textarea.value.substring(0, start) + replacement + textarea.value.substring(end);
 
-            // Đưa con trỏ chuột quay lại đúng vị trí vừa bôi đen
             textarea.focus();
             textarea.setSelectionRange(start, start + replacement.length);
         }
-        // ====================================================================
 
         // 1. CẤU HÌNH FIREBASE
         const firebaseConfig = {
@@ -607,7 +623,6 @@
             authDomain: "toantin-d32b2.firebaseapp.com",
             databaseURL: "https://toantin-d32b2-default-rtdb.firebaseio.com",
             projectId: "toantin-d32b2",
-            storageBucket: "toantin-d32b2.firebasestorage.app",
             messagingSenderId: "416212565318",
             appId: "1:416212565318:web:9480d4d2951c71a0b8f947",
             measurementId: "G-TZB62HZQ7X"
@@ -619,6 +634,7 @@
         // 2. DỮ LIỆU TOÀN CỤC
         let currentUser = { id: '', name: '', role: '', username: '' };
         let currentMeetingId = null;
+        let uploadedFiles = []; // Mảng tạm lưu file đính kèm
         let editingMemberIndex = -1; 
         let viewingTaskTeacherIndex = -1; 
         let editingPlanIndex = -1; 
@@ -808,6 +824,58 @@
         
         function insertPlaceholder() { const contentArea = document.getElementById('m-content'); const cursorPosition = contentArea.selectionStart; const textBefore = contentArea.value.substring(0, cursorPosition); const textAfter = contentArea.value.substring(cursorPosition); contentArea.value = textBefore + (textBefore.endsWith('\n') || textBefore === '' ? '' : '\n') + "[BANG]\n" + textAfter; contentArea.focus(); }
 
+        // --- XỬ LÝ LƯU FILE MIỄN PHÍ VÀO REALTIME DATABASE (DẠNG BASE64) ---
+        function readFileAsBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = error => reject(error);
+                reader.readAsDataURL(file);
+            });
+        }
+
+        async function handleFileUpload(event) {
+            const files = event.target.files;
+            const statusDiv = document.getElementById('upload-status');
+            const previewList = document.getElementById('file-list-preview');
+            const saveBtn = document.getElementById('btn-save-item');
+            
+            if (files.length === 0) return;
+            statusDiv.innerHTML = "Đang xử lý file... Vui lòng đợi!";
+            if(saveBtn) saveBtn.disabled = true; 
+
+            const MAX_FILE_SIZE = 2.5 * 1024 * 1024; // Giới hạn 2.5MB
+
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                
+                if (file.size > MAX_FILE_SIZE) {
+                    alert(`File "${file.name}" quá lớn. Vui lòng nén file xuống dưới 2.5MB để tiết kiệm bộ nhớ máy chủ miễn phí!`);
+                    continue;
+                }
+
+                try {
+                    const base64String = await readFileAsBase64(file);
+                    const fileId = 'file_' + Date.now() + '_' + i;
+                    
+                    uploadedFiles.push({
+                        id: fileId,
+                        name: file.name,
+                        type: file.type,
+                        dataUrl: base64String
+                    });
+                    
+                    previewList.innerHTML += `<li style="margin-bottom: 5px; color: green; font-weight: bold;">✅ Đã xử lý: ${file.name}</li>`;
+                } catch (error) {
+                    console.error("Lỗi mã hóa file:", error);
+                    alert("Lỗi xử lý: " + file.name);
+                }
+            }
+            
+            statusDiv.innerHTML = "<span style='color: green; font-weight: bold;'>Đã sẵn sàng đăng!</span>";
+            if(saveBtn) saveBtn.disabled = false;
+        }
+
         // TẠO CUỘC HỌP
         function saveMeeting() {
             const title = document.getElementById('m-title').value.trim();
@@ -815,6 +883,12 @@
             const deadline = document.getElementById('m-deadline').value;
             const content = document.getElementById('m-content').value.trim();
             if (!title || !content) return alert('Nhập đủ Tiêu đề và Nội dung!');
+
+            const attachedFilesInfo = uploadedFiles.map(f => ({
+                id: f.id,
+                name: f.name,
+                type: f.type
+            }));
 
             const newM = { 
                 id: Date.now(), 
@@ -826,8 +900,15 @@
                 host: currentUser.name, 
                 comments: [],
                 dynamicTable: dynamicTableData, 
-                tableConfig: { colWidths: dynamicColWidths, rowHeights: dynamicRowHeights }
+                tableConfig: { colWidths: dynamicColWidths, rowHeights: dynamicRowHeights },
+                files: attachedFilesInfo
             };
+
+            // Lưu nội dung base64 vào nhánh riêng sudia/files
+            uploadedFiles.forEach(f => {
+                db.ref(`sudia/files/${f.id}`).set(f.dataUrl);
+            });
+
             meetings.push(newM);
             
             db.ref('sudia/meetings').set(meetings).then(() => {
@@ -835,12 +916,25 @@
                 document.getElementById('m-time').value = ''; 
                 document.getElementById('m-deadline').value = ''; 
                 document.getElementById('m-content').value = '';
+                
+                const fileInput = document.getElementById('m-files');
+                if(fileInput) fileInput.value = '';
+                document.getElementById('file-list-preview').innerHTML = '';
+                document.getElementById('upload-status').innerHTML = '';
+                uploadedFiles = [];
+
                 showScreen('main-app');
             });
         }
 
         function deleteMeeting(id) {
-            if (confirm('XÓA biên bản này?')) { 
+            if (confirm('XÓA biên bản này? Các file đính kèm cũng sẽ bị xóa khỏi máy chủ.')) { 
+                const itemToDelete = meetings.find(x => x.id === id);
+                if (itemToDelete && itemToDelete.files) {
+                    itemToDelete.files.forEach(f => {
+                        db.ref(`sudia/files/${f.id}`).remove();
+                    });
+                }
                 meetings = meetings.filter(x => x.id !== id); 
                 db.ref('sudia/meetings').set(meetings); 
             }
@@ -878,10 +972,12 @@
 
                 if (currentUser.role === 'admin') actionBtns += `<button class="btn-danger" style="margin-left: 5px;" onclick="deleteMeeting(${m.id})">Xóa</button>`;
                 
+                let fileIndicator = (m.files && m.files.length > 0) ? `<span style="margin-left: 10px; color: #28a745; font-size: 12px; font-weight: bold;">📎 ${m.files.length} đính kèm</span>` : '';
+
                 div.innerHTML = `
                     <div style="font-family: 'Segoe UI', sans-serif;">
                         <h4 style="margin: 0 0 5px 0; color: #0056b3;">${m.title} ${isLocked ? '<span style="color: red; font-size:12px;">(Đã khóa)</span>' : ''}</h4>
-                        <small>Người tạo: ${m.host} | Số ý kiến: ${commentCount}</small>
+                        <small>Người tạo: ${m.host} | Số ý kiến: ${commentCount} ${fileIndicator}</small>
                     </div>
                     <div>${actionBtns}</div>
                 `;
@@ -1000,6 +1096,34 @@
         function viewMeeting(id, isRefresh = false) {
             currentMeetingId = id; const m = meetings.find(x => x.id === id);
             
+            // Xử lý hiển thị danh sách file đính kèm
+            const attachmentSection = document.getElementById('attachment-section');
+            const filesListDiv = document.getElementById('d-files-list');
+            const pdfContainer = document.getElementById('pdf-viewer-container');
+            
+            if (m.files && m.files.length > 0) {
+                attachmentSection.style.display = 'block';
+                filesListDiv.innerHTML = '';
+                pdfContainer.style.display = 'none'; 
+            
+                m.files.forEach(file => {
+                    const fileRow = document.createElement('div');
+                    fileRow.style.marginBottom = '8px';
+                    fileRow.style.display = 'flex';
+                    fileRow.style.alignItems = 'center';
+                    fileRow.style.gap = '10px';
+            
+                    fileRow.innerHTML = `
+                        <button class="btn-primary" style="padding: 5px 10px; font-size: 13px;" onclick="previewFileFromDB('${file.id}', '${file.type}')">👁️ Xem (PDF)</button>
+                        <button class="btn-info" style="padding: 5px 10px; font-size: 13px;" onclick="downloadFileFromDB('${file.id}', '${file.name}')">⬇️ Tải về</button>
+                        <span style="color: #dc3545; font-weight: bold;">📄 ${file.name}</span>
+                    `;
+                    filesListDiv.appendChild(fileRow);
+                });
+            } else {
+                attachmentSection.style.display = 'none';
+            }
+
             if(!isRefresh) {
                 document.getElementById('print-area').innerHTML = printAreaTemplate; 
                 if (m.customHtml) {
@@ -1007,7 +1131,6 @@
                     if (currentUser.role === 'admin') document.getElementById('btn-restore-print').style.display = 'inline-block';
                     document.getElementById('c-deadline-input').value = m.deadline || '';
                     
-                    // Kiểm tra quyền Nhóm trưởng
                     let canEdit = (currentUser.role === 'admin');
                     if (m.subMeetings) {
                         let subArr = Array.isArray(m.subMeetings) ? m.subMeetings : Object.values(m.subMeetings);
@@ -1077,7 +1200,6 @@
                 });
             }
 
-            // Kiểm tra quyền Nhóm trưởng
             let canEdit = (currentUser.role === 'admin');
             if (m.subMeetings) {
                 let subArr = Array.isArray(m.subMeetings) ? m.subMeetings : Object.values(m.subMeetings);
@@ -1101,8 +1223,47 @@
             if(!isRefresh) showScreen('detail-screen');
         }
 
+        // --- CÁC HÀM XỬ LÝ LẤY FILE TỪ DATABASE ---
+        function previewFileFromDB(fileId, type) {
+            const pdfContainer = document.getElementById('pdf-viewer-container');
+            const iframe = document.getElementById('pdf-iframe');
+            pdfContainer.style.display = 'none';
+
+            if (!type || !type.includes('pdf')) {
+                alert("Hệ thống chỉ hỗ trợ xem trực tiếp file PDF. Xin vui lòng bấm 'Tải về' đối với file Word/Excel.");
+                return;
+            }
+
+            iframe.src = "";
+            db.ref(`sudia/files/${fileId}`).once('value').then(snap => {
+                const dataUrl = snap.val();
+                if (dataUrl) {
+                    iframe.src = dataUrl;
+                    pdfContainer.style.display = 'block';
+                    pdfContainer.scrollIntoView({ behavior: 'smooth' });
+                } else {
+                    alert("Không tìm thấy dữ liệu file trên máy chủ!");
+                }
+            }).catch(e => { alert("Có lỗi khi lấy file."); });
+        }
+
+        function downloadFileFromDB(fileId, fileName) {
+            db.ref(`sudia/files/${fileId}`).once('value').then(snap => {
+                const dataUrl = snap.val();
+                if (dataUrl) {
+                    const a = document.createElement("a");
+                    a.href = dataUrl;
+                    a.download = fileName;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                } else {
+                    alert("Không tìm thấy dữ liệu file trên máy chủ!");
+                }
+            }).catch(e => { alert("Có lỗi khi tải file."); });
+        }
+
         function populateInteractionTargets(m) { 
-            // 1. Danh sách cho phần Góp ý (Mọi người đều thấy tất cả biên bản)
             const t1 = document.getElementById('c-target'); 
             let val1 = t1.value; 
             let opts1 = '<option value="main">Cuộc họp chung</option>'; 
@@ -1113,7 +1274,6 @@
             t1.innerHTML = opts1; 
             if([...t1.options].some(o => o.value === val1)) t1.value = val1; 
 
-            // 2. Danh sách cho phần Sửa nội dung & Kết luận (Nhóm trưởng chỉ thấy nhóm của mình)
             const t2 = document.getElementById('c-edit-target'); 
             if(t2) {
                 let val2 = t2.value; 
@@ -1122,7 +1282,6 @@
                 if(m.subMeetings) { 
                     let subArr = Array.isArray(m.subMeetings) ? m.subMeetings : Object.values(m.subMeetings); 
                     subArr.forEach((sub, i) => { 
-                        // Nếu là admin hoặc chính là nhóm trưởng của nhóm đó thì mới hiển thị tùy chọn
                         if (currentUser.role === 'admin' || sub.host === currentUser.name) {
                             opts2 += `<option value="${i}">Biên bản: ${sub.title}</option>`; 
                         }
@@ -1194,7 +1353,6 @@
             db.ref('sudia/meetings').set(meetings).then(() => { document.getElementById('c-text').value = ''; });
         }
 
-        // CÁC HÀM CÒN LẠI GIỮ NGUYÊN
         function renderPlans() { const tbody = document.getElementById('plan-list'); tbody.innerHTML = ''; if (plans.length === 0) { tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:#666;">Chưa có kế hoạch</td></tr>'; return; } plans.forEach((pl, index) => { const tr = document.createElement('tr'); let adminCols = (currentUser.role === 'admin') ? `<td class="admin-only-cell" style="text-align: center;"><button class="btn-warning" style="width:100%; margin-bottom:5px;" onclick="editPlan(${index})">Sửa</button><button class="btn-danger" style="width:100%;" onclick="deletePlan(${index})">Xóa</button></td>` : ''; tr.innerHTML = `<td style="text-align: center;"><b>${index + 1}</b></td><td style="text-align: center;"><b>${pl.time}</b></td><td><div class="no-indent-text">${formatParagraphs(pl.content)}</div></td><td><div class="no-indent-text">${formatParagraphs(pl.note || '')}</div></td>${adminCols}`; tbody.appendChild(tr); }); }
         function savePlan() { const time = document.getElementById('pl-time').value.trim(); const content = document.getElementById('pl-content').value.trim(); const note = document.getElementById('pl-note').value.trim(); if (!time || !content) { alert('Vui lòng nhập Thời gian và Nội dung!'); return; } if (editingPlanIndex >= 0) plans[editingPlanIndex] = { time, content, note }; else plans.push({ time, content, note }); db.ref('sudia/plans').set(plans).then(() => { cancelEditPlan(); alert(editingPlanIndex >= 0 ? "Đã cập nhật!" : "Đã thêm mới!"); }); }
         function editPlan(index) { editingPlanIndex = index; const pl = plans[index]; document.getElementById('pl-time').value = pl.time || ''; document.getElementById('pl-content').value = pl.content || ''; document.getElementById('pl-note').value = pl.note || ''; document.getElementById('form-plan-title').innerText = "Sửa kế hoạch (STT " + (index + 1) + ")"; document.getElementById('btn-save-plan').innerText = "Cập nhật"; document.getElementById('btn-save-plan').className = "btn-warning"; document.getElementById('btn-cancel-edit-plan').style.display = "inline-block"; document.getElementById('admin-plan-form').scrollIntoView({ behavior: 'smooth' }); }
